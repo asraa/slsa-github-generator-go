@@ -15,7 +15,6 @@
 package pkg
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -26,14 +25,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/slsa-framework/slsa-github-generator/signing/sigstore"
+
 	intoto "github.com/in-toto/in-toto-golang/in_toto"
 	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
-	"github.com/sigstore/cosign/cmd/cosign/cli/fulcio"
-	"github.com/sigstore/cosign/cmd/cosign/cli/rekor"
-	"github.com/sigstore/cosign/pkg/cosign"
-	"github.com/sigstore/cosign/pkg/providers"
 	_ "github.com/sigstore/cosign/pkg/providers/all"
-	"github.com/sigstore/sigstore/pkg/signature/dsse"
 )
 
 const (
@@ -203,47 +199,11 @@ func GenerateProvenance(name, digest, ghContext, command, envs string) ([]byte, 
 		},
 	}
 
-	attBytes, err := json.Marshal(att)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get Fulcio signer
 	ctx := context.Background()
-	if !providers.Enabled(ctx) {
-		return nil, fmt.Errorf("no auth provider for fulcio is enabled")
-	}
+	s := sigstore.NewDefaultSigner()
+	signedAtt, err := s.Sign(ctx, &att)
 
-	fClient, err := fulcio.NewClient(defaultFulcioAddr)
-	if err != nil {
-		return nil, err
-	}
-	tok, err := providers.Provide(ctx, defaultOIDCClientID)
-	if err != nil {
-		return nil, err
-	}
-	k, err := fulcio.NewSigner(ctx, tok, defaultOIDCIssuer, defaultOIDCClientID, "", fClient)
-	if err != nil {
-		return nil, err
-	}
-	wrappedSigner := dsse.WrapSigner(k, intoto.PayloadType)
-
-	signedAtt, err := wrappedSigner.SignMessage(bytes.NewReader(attBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	// Upload to tlog
-	rekorClient, err := rekor.NewClient(defaultRekorAddr)
-	if err != nil {
-		return nil, err
-	}
-	// TODO: Is it a bug that we need []byte(string(k.Cert)) or else we hit invalid PEM?
-	if _, err := cosign.TLogUploadInTotoAttestation(ctx, rekorClient, signedAtt, []byte(string(k.Cert))); err != nil {
-		return nil, err
-	}
-
-	return signedAtt, nil
+	return signedAtt.Bytes(), nil
 }
 
 func unmarshallList(arg string) ([]string, error) {
